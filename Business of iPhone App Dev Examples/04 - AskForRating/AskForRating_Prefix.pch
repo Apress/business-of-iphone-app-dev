@@ -1,0 +1,8 @@
+//
+// Prefix header for all source files of the 'AskForRating' target in the 'AskForRating' project
+//
+
+#ifdef __OBJC__
+    #import <Foundation/Foundation.h>
+    #import <UIKit/UIKit.h>
+#endif

@@ -1,0 +1,1006 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+         "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>In-App Help Example</title>
+<meta name="viewport" content="width=device-width; initial-scale=1.0; maximum-scale=1.0; user-scalable=0;"/>
+<meta name="apple-touch-fullscreen" content="YES" />
+<script type="application/x-javascript">
+
+/*  
+
+This HTML Help Page is based on a modified version of iUI, a JavaScript 
+and CSS package for developing native-looking WebApps for the iPhone.
+
+To install and use iUI, follow the instructions on the iUI Project Wiki:
+http://code.google.com/p/iui/wiki/Introduction
+
+Copyright (c) 2007-2009, iUI Project Members. All rights reserved.
+
+iUI License:
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice, 
+	this list of conditions and the following disclaimer.
+- Redistributions in binary form must reproduce the above copyright notice, 
+	this list of conditions and the following disclaimer in the documentation 
+	and/or other materials provided with the distribution.
+- Neither the name of the iUI Project nor the names of its contributors may 
+	be used to endorse or promote products derived from this software without 
+	specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
+
+
+(function() {
+
+var slideSpeed = 20;
+var slideInterval = 0;
+
+var currentPage = null;
+var currentDialog = null;
+var currentWidth = 0;
+var currentHash = location.hash;
+var hashPrefix = "#_";
+var pageHistory = [];
+var newPageCount = 0;
+var checkTimer;
+var hasOrientationEvent = false;
+var portraitVal = "portrait";
+var landscapeVal = "landscape";
+
+// *************************************************************************************************
+
+window.iui =
+{
+	animOn: true,	// Slide animation with CSS transition is now enabled by default where supported
+
+	showPage: function(page, backwards)
+	{
+		if (page)
+		{
+			if (currentDialog)
+			{
+				currentDialog.removeAttribute("selected");
+				currentDialog = null;
+			}
+
+			if (hasClass(page, "dialog"))
+				showDialog(page);
+			else
+			{
+				var fromPage = currentPage;
+				currentPage = page;
+
+				if (fromPage)
+					setTimeout(slidePages, 0, fromPage, page, backwards);
+				else
+					updatePage(page, fromPage);
+			}
+		}
+	},
+
+	showPageById: function(pageId)
+	{
+		var page = $(pageId);
+		if (page)
+		{
+			var index = pageHistory.indexOf(pageId);
+			var backwards = index != -1;
+			if (backwards)
+				pageHistory.splice(index, pageHistory.length);
+
+			iui.showPage(page, backwards);
+		}
+	},
+
+	showPageByHref: function(href, args, method, replace, cb)
+	{
+		var req = new XMLHttpRequest();
+		req.onerror = function()
+		{
+			if (cb)
+				cb(false);
+		};
+		
+		req.onreadystatechange = function()
+		{
+			if (req.readyState == 4)
+			{
+				if (replace)
+					replaceElementWithSource(replace, req.responseText);
+				else
+				{
+					var frag = document.createElement("div");
+					frag.innerHTML = req.responseText;
+					iui.insertPages(frag.childNodes);
+				}
+				if (cb)
+					setTimeout(cb, 1000, true);
+			}
+		};
+
+		if (args)
+		{
+			req.open(method || "GET", href, true);
+			req.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+			req.setRequestHeader("Content-Length", args.length);
+			req.send(args.join("&"));
+		}
+		else
+		{
+			req.open(method || "GET", href, true);
+			req.send(null);
+		}
+	},
+	
+	insertPages: function(nodes)
+	{
+		var targetPage;
+		for (var i = 0; i < nodes.length; ++i)
+		{
+			var child = nodes[i];
+			if (child.nodeType == 1)
+			{
+				if (!child.id)
+					child.id = "__" + (++newPageCount) + "__";
+
+				var clone = $(child.id);
+				if (clone)
+					clone.parentNode.replaceChild(child, clone);
+				else
+					document.body.appendChild(child);
+
+				if (child.getAttribute("selected") == "true" || !targetPage)
+					targetPage = child;
+				
+				--i;
+			}
+		}
+
+		if (targetPage)
+			iui.showPage(targetPage);	 
+	},
+
+	getSelectedPage: function()
+	{
+		for (var child = document.body.firstChild; child; child = child.nextSibling)
+		{
+			if (child.nodeType == 1 && child.getAttribute("selected") == "true")
+				return child;
+		}	 
+	},
+	isNativeUrl: function(href)
+	{
+		for(var i = 0; i < iui.nativeUrlPatterns.length; i++)
+		{
+			if(href.match(iui.nativeUrlPatterns[i])) return true;
+		}
+		return false;
+	},
+	nativeUrlPatterns: [
+		new RegExp("^http:\/\/maps.google.com\/maps\?"),
+		new RegExp("^mailto:"),
+		new RegExp("^tel:"),
+		new RegExp("^http:\/\/www.youtube.com\/watch\\?v="),
+		new RegExp("^http:\/\/www.youtube.com\/v\/"),
+		new RegExp("^javascript:"),
+
+	]
+};
+
+// *************************************************************************************************
+
+addEventListener("load", function(event)
+{
+	var page = iui.getSelectedPage();
+	var locPage = getPageFromLoc();
+		
+	if (page)
+			iui.showPage(page);
+	
+	if (locPage && (locPage != page))
+		iui.showPage(locPage);
+	
+	setTimeout(preloadImages, 0);
+	if (typeof window.onorientationchange == "object")
+	{
+		window.onorientationchange=orientChangeHandler;
+		hasOrientationEvent = true;
+		setTimeout(orientChangeHandler, 0);
+	}
+	setTimeout(checkOrientAndLocation, 0);
+	checkTimer = setInterval(checkOrientAndLocation, 300);
+}, false);
+
+addEventListener("unload", function(event)
+{
+	return;
+}, false);
+	
+addEventListener("click", function(event)
+{
+	var link = findParent(event.target, "a");
+	if (link)
+	{
+		function unselect() { link.removeAttribute("selected"); }
+		
+		if (link.href && link.hash && link.hash != "#" && !link.target)
+		{
+			link.setAttribute("selected", "true");
+			iui.showPage($(link.hash.substr(1)));
+			setTimeout(unselect, 500);
+		}
+		else if (link == $("backButton"))
+			history.back();
+		else if (link.getAttribute("type") == "submit")
+		{
+			var form = findParent(link, "form");
+			if (form.target == "_self")
+			{
+			    form.submit();
+			    return;  // return so we don't preventDefault
+			}
+			submitForm(form);
+		}
+		else if (link.getAttribute("type") == "cancel")
+			cancelDialog(findParent(link, "form"));
+		else if (link.target == "_replace")
+		{
+			link.setAttribute("selected", "progress");
+			iui.showPageByHref(link.href, null, null, link, unselect);
+		}
+		else if (iui.isNativeUrl(link.href))
+		{
+			return;
+		}
+		else if (link.target == "_webapp")
+		{
+			location.href = link.href;
+		}
+		else if (!link.target)
+		{
+			link.setAttribute("selected", "progress");
+			iui.showPageByHref(link.href, null, null, null, unselect);
+		}
+		else
+			return;
+		
+		event.preventDefault();		   
+	}
+}, true);
+
+addEventListener("click", function(event)
+{
+	var div = findParent(event.target, "div");
+	if (div && hasClass(div, "toggle"))
+	{
+		div.setAttribute("toggled", div.getAttribute("toggled") != "true");
+		event.preventDefault();		   
+	}
+}, true);
+
+function getPageFromLoc()
+{
+	var page;
+	var result = location.hash.match(/#_([^\?_]+)/);
+	if (result)
+		page = result[1];
+	if (page)
+		page = $(page);
+	return page;
+}
+
+function orientChangeHandler()
+{
+	var orientation=window.orientation;
+	switch(orientation)
+	{
+	case 0:
+		setOrientation(portraitVal);
+		break;	
+		
+	case 90:
+	case -90: 
+		setOrientation(landscapeVal);
+		break;
+	}
+}
+
+
+function checkOrientAndLocation()
+{
+	if (!hasOrientationEvent)
+	{
+	  if (window.innerWidth != currentWidth)
+	  {	  
+		  currentWidth = window.innerWidth;
+		  var orient = currentWidth == 320 ? portraitVal : landscapeVal;
+		  setOrientation(orient);
+	  }
+	}
+
+	if (location.hash != currentHash)
+	{
+		var pageId = location.hash.substr(hashPrefix.length);
+		iui.showPageById(pageId);
+	}
+}
+
+function setOrientation(orient)
+{
+	document.body.setAttribute("orient", orient);
+	setTimeout(scrollTo, 100, 0, 1);
+}
+
+function showDialog(page)
+{
+	currentDialog = page;
+	page.setAttribute("selected", "true");
+	
+	if (hasClass(page, "dialog") && !page.target)
+		showForm(page);
+}
+
+function showForm(form)
+{
+	form.onsubmit = function(event)
+	{
+		event.preventDefault();
+		submitForm(form);
+	};
+	
+	form.onclick = function(event)
+	{
+		if (event.target == form && hasClass(form, "dialog"))
+			cancelDialog(form);
+	};
+}
+
+function cancelDialog(form)
+{
+	form.removeAttribute("selected");
+}
+
+function updatePage(page, fromPage)
+{
+	if (!page.id)
+		page.id = "__" + (++newPageCount) + "__";
+
+	location.hash = currentHash = hashPrefix + page.id;
+	pageHistory.push(page.id);
+
+	var pageTitle = $("pageTitle");
+	if (page.title)
+		pageTitle.innerHTML = page.title;
+
+	if (page.localName.toLowerCase() == "form" && !page.target)
+		showForm(page);
+		
+	var backButton = $("backButton");
+	if (backButton)
+	{
+		var prevPage = $(pageHistory[pageHistory.length-2]);
+		if (prevPage && !page.getAttribute("hideBackButton"))
+		{
+			backButton.style.display = "inline";
+			backButton.innerHTML = prevPage.title ? prevPage.title : "Back";
+		}
+		else
+			backButton.style.display = "none";
+	}	 
+}
+
+function slidePages(fromPage, toPage, backwards)
+{		 
+	var axis = (backwards ? fromPage : toPage).getAttribute("axis");
+
+	clearInterval(checkTimer);
+	
+	if (canDoSlideAnim() && axis != 'y')
+	{
+	  slide2(fromPage, toPage, backwards, slideDone);
+	}
+	else
+	{
+	  slide1(fromPage, toPage, backwards, axis, slideDone);
+	}
+
+	function slideDone()
+	{
+	  if (!hasClass(toPage, "dialog"))
+		  fromPage.removeAttribute("selected");
+	  checkTimer = setInterval(checkOrientAndLocation, 300);
+	  setTimeout(updatePage, 0, toPage, fromPage);
+	  fromPage.removeEventListener('webkitTransitionEnd', slideDone, false);
+	}
+}
+
+function canDoSlideAnim()
+{
+  return (iui.animOn) && (typeof WebKitCSSMatrix == "object");
+}
+
+function slide1(fromPage, toPage, backwards, axis, cb)
+{
+	if (axis == "y")
+		(backwards ? fromPage : toPage).style.top = "100%";
+	else
+		toPage.style.left = "100%";
+
+	scrollTo(0, 1);
+	toPage.setAttribute("selected", "true");
+	var percent = 100;
+	slide();
+	var timer = setInterval(slide, slideInterval);
+
+	function slide()
+	{
+		percent -= slideSpeed;
+		if (percent <= 0)
+		{
+			percent = 0;
+			clearInterval(timer);
+			cb();
+		}
+	
+		if (axis == "y")
+		{
+			backwards
+				? fromPage.style.top = (100-percent) + "%"
+				: toPage.style.top = percent + "%";
+		}
+		else
+		{
+			fromPage.style.left = (backwards ? (100-percent) : (percent-100)) + "%"; 
+			toPage.style.left = (backwards ? -percent : percent) + "%"; 
+		}
+	}
+}
+
+
+function slide2(fromPage, toPage, backwards, cb)
+{
+	toPage.style.webkitTransitionDuration = '0ms'; // Turn off transitions to set toPage start offset
+	// fromStart is always 0% and toEnd is always 0%
+	// iPhone won't take % width on toPage
+	var toStart = 'translateX(' + (backwards ? '-' : '') + window.innerWidth +	'px)';
+	var fromEnd = 'translateX(' + (backwards ? '100%' : '-100%') + ')';
+	toPage.style.webkitTransform = toStart;
+	toPage.setAttribute("selected", "true");
+	toPage.style.webkitTransitionDuration = '';	  // Turn transitions back on
+	function startTrans()
+	{
+		fromPage.style.webkitTransform = fromEnd;
+		toPage.style.webkitTransform = 'translateX(0%)'; //toEnd
+	}
+	fromPage.addEventListener('webkitTransitionEnd', cb, false);
+	setTimeout(startTrans, 0);
+}
+
+function preloadImages()
+{
+	var preloader = document.createElement("div");
+	preloader.id = "preloader";
+	document.body.appendChild(preloader);
+}
+
+function submitForm(form)
+{
+	iui.showPageByHref(form.action || "POST", encodeForm(form), form.method);
+}
+
+function encodeForm(form)
+{
+	function encode(inputs)
+	{
+		for (var i = 0; i < inputs.length; ++i)
+		{
+			if (inputs[i].name)
+				args.push(inputs[i].name + "=" + escape(inputs[i].value));
+		}
+	}
+
+	var args = [];
+	encode(form.getElementsByTagName("input"));
+	encode(form.getElementsByTagName("textarea"));
+	encode(form.getElementsByTagName("select"));
+	return args;	
+}
+
+function findParent(node, localName)
+{
+	while (node && (node.nodeType != 1 || node.localName.toLowerCase() != localName))
+		node = node.parentNode;
+	return node;
+}
+
+function hasClass(self, name)
+{
+	var re = new RegExp("(^|\\s)"+name+"($|\\s)");
+	return re.exec(self.getAttribute("class")) != null;
+}
+
+function replaceElementWithSource(replace, source)
+{
+	var page = replace.parentNode;
+	var parent = replace;
+	while (page.parentNode != document.body)
+	{
+		page = page.parentNode;
+		parent = parent.parentNode;
+	}
+
+	var frag = document.createElement(parent.localName);
+	frag.innerHTML = source;
+
+	page.removeChild(parent);
+
+	while (frag.firstChild)
+		page.appendChild(frag.firstChild);
+}
+
+function $(id) { return document.getElementById(id); }
+function ddd() { console.log.apply(console, arguments); }
+
+})();
+
+</script>
+
+<style type="text/css">
+body {
+    margin: 0;
+    font-family: Helvetica;
+    background: #FFFFFF;
+    color: #000000;
+    overflow-x: hidden;
+    -webkit-user-select: none;
+    -webkit-text-size-adjust: none;
+}
+
+body > *:not(.toolbar) {
+    display: none;
+    position: absolute;
+    margin: 0;
+    padding: 0;
+    left: 0;
+    top: 45px;
+    width: 100%;
+    min-height: 372px;
+    -webkit-transition-duration: 300ms;
+    -webkit-transition-property: -webkit-transform;
+    -webkit-transform: translateX(0%);
+}
+
+body[orient="landscape"] > *:not(.toolbar) {
+    min-height: 268px;
+}
+
+body > *[selected="true"] {
+    display: block;
+}
+
+a[selected], a:active {
+    background-color: #194fdb !important;
+    background-image: url(listArrowSel.png), url(selection.png) !important;
+    background-repeat: no-repeat, repeat-x;
+    background-position: right center, left top;
+    color: #FFFFFF !important;
+}
+
+a[selected="progress"] {
+    background-image: url(loading.gif), url(selection.png) !important;
+}
+
+/************************************************************************************************/
+
+body > .toolbar {
+    box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    border-bottom: 1px solid #2d3642;
+    border-top: 1px solid #6d84a2;
+    padding: 10px;
+    height: 45px;
+    background: url(toolbar.png) #6d84a2 repeat-x;
+}
+
+.toolbar > h1 {
+    position: absolute;
+    overflow: hidden;
+    left: 50%;
+    margin: 1px 0 0 -75px;
+    height: 45px;
+    font-size: 20px;
+    width: 150px;
+    font-weight: bold;
+    text-shadow: rgba(0, 0, 0, 0.4) 0px -1px 0;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #FFFFFF;
+}
+
+body[orient="landscape"] > .toolbar > h1 {
+    margin-left: -125px;
+    width: 250px;
+}
+
+.button {
+    position: absolute;
+    overflow: hidden;
+    top: 8px;
+    right: 6px;
+    margin: 0;
+    border-width: 0 5px;
+    padding: 0 3px;
+    width: auto;
+    height: 30px;
+    line-height: 30px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: bold;
+    color: #FFFFFF;
+    text-shadow: rgba(0, 0, 0, 0.6) 0px -1px 0;
+    text-overflow: ellipsis;
+    text-decoration: none;
+    white-space: nowrap;
+    background: none;
+    -webkit-border-image: url(toolButton.png) 0 5 0 5;
+}
+
+.blueButton {
+    -webkit-border-image: url(blueButton.png) 0 5 0 5;
+    border-width: 0 5px;
+}
+
+.leftButton {
+    left: 6px;
+    right: auto;
+}
+
+#backButton {
+    display: none;
+    left: 6px;
+    right: auto;
+    padding: 0;
+    max-width: 55px;
+    border-width: 0 8px 0 14px;
+    -webkit-border-image: url(backButton.png) 0 8 0 14;
+}
+
+.whiteButton,
+.redButton,
+.grayButton {
+    display: block;
+    border-width: 0 12px;
+    padding: 10px;
+    text-align: center;
+    font-size: 20px;
+    font-weight: bold;
+    text-decoration: inherit;
+    color: inherit;
+}
+
+.whiteButton {
+    -webkit-border-image: url(whiteButton.png) 0 12 0 12;
+    text-shadow: rgba(255, 255, 255, 0.7) 0 1px 0;
+}
+
+.redButton {
+    -webkit-border-image: url(redButton.png) 0 12 0 12;
+    color:#fff;
+    text-shadow: #7a0001 0 -1px 0;
+}
+
+.grayButton {
+    -webkit-border-image: url(grayButton.png) 0 12 0 12;
+    color: #FFFFFF;
+}
+
+/************************************************************************************************/
+
+body > ul > li {
+    position: relative;
+    margin: 0;
+    border-bottom: 1px solid #E0E0E0;
+    padding: 8px 0 8px 10px;
+    font-size: 20px;
+    font-weight: bold;
+    list-style: none;
+}
+
+body > ul > li.group {
+    position: relative;
+    top: -1px;
+    margin-bottom: -2px;
+    border-top: 1px solid #7d7d7d;
+    border-bottom: 1px solid #999999;
+    padding: 1px 10px;
+    background: url(listGroup.png) repeat-x;
+    font-size: 17px;
+    font-weight: bold;
+    text-shadow: rgba(0, 0, 0, 0.4) 0 1px 0;
+    color: #FFFFFF;
+}
+
+body > ul > li.group:first-child {
+    top: 0;
+    border-top: none;
+}
+
+body > ul > li > a {
+    display: block;
+    margin: -8px 0 -8px -10px;
+    padding: 8px 32px 8px 10px;
+    text-decoration: none;
+    color: inherit;
+    background: url(listArrow.png) no-repeat right center;
+}
+
+a[target="_replace"] {
+    box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    padding-top: 25px;
+    padding-bottom: 25px;
+    font-size: 18px;
+    color: cornflowerblue;
+    background-color: #FFFFFF;
+    background-image: none;
+}
+
+/************************************************************************************************/
+    
+body > .dialog {
+    top: 0;
+    width: 100%;
+    min-height: 417px;
+    z-index: 2;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 0;
+    text-align: right;
+}
+
+.dialog > fieldset {
+    box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+    border: none;
+    border-top: 1px solid #6d84a2;
+    padding: 10px 6px;
+    background: url(toolbar.png) #7388a5 repeat-x;
+}
+
+.dialog > fieldset > h1 {
+    margin: 0 10px 0 10px;
+    padding: 0;
+    font-size: 20px;
+    font-weight: bold;
+    color: #FFFFFF;
+    text-shadow: rgba(0, 0, 0, 0.4) 0px -1px 0;
+    text-align: center;
+}
+
+.dialog > fieldset > label {
+    position: absolute;
+    margin: 16px 0 0 6px;
+    font-size: 14px;
+    color: #999999;
+}
+
+input:not(input[type|=radio]):not(input[type|=checkbox]) {
+    box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    width: 100%;
+    margin: 8px 0 0 0;
+    padding: 6px 6px 6px 44px;
+    font-size: 16px;
+    font-weight: normal;
+}
+
+/************************************************************************************************/
+
+body > .panel {
+    box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    padding: 10px;
+    background: #c8c8c8 url(pinstripes.png);
+}
+
+.panel > fieldset {
+    position: relative;
+    margin: 0 0 20px 0;
+    padding: 0;
+    background: #FFFFFF;
+    -webkit-border-radius: 10px;
+    -moz-border-radius: 10px;
+    border: 1px solid #999999;
+    text-align: right;
+    font-size: 16px;
+}
+
+.row  {
+    position: relative;
+    min-height: 42px;
+    border-bottom: 1px solid #999999;
+    -webkit-border-radius: 0;
+    text-align: right;
+}
+
+fieldset > .row:last-child {
+    border-bottom: none !important;
+}
+
+.row > input:not(input[type|=radio]):not(input[type|=checkbox]) {
+    box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    -webkit-box-sizing: border-box;
+    margin: 0;
+    border: none;
+    padding: 12px 10px 0 110px;
+    height: 42px;
+    background: none;
+}
+.row > input[type|=radio], .row > input[type|=checkbox] {
+  margin: 7px 7px 0 0;
+  height: 25px;
+  width: 25px;
+}
+
+.row > label {
+    position: absolute;
+    margin: 0 0 0 14px;
+    line-height: 42px;
+    font-weight: bold;
+}
+
+.row > span {
+    position: absolute;
+    padding: 12px 10px 0 110px;
+    margin: 0;
+}
+
+.row > .toggle {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 100px;
+    height: 28px;
+}
+
+.toggle {
+    border: 1px solid #888888;
+    -webkit-border-radius: 6px;
+    background: #FFFFFF url(toggle.png) repeat-x;
+    font-size: 19px;
+    font-weight: bold;
+    line-height: 30px;
+}
+
+.toggle[toggled="true"] {
+    border: 1px solid #143fae;
+    background: #194fdb url(toggleOn.png) repeat-x;
+}
+
+.toggleOn {
+    display: none;
+    position: absolute;
+    width: 60px;
+    text-align: center;
+    left: 0;
+    top: 0;
+    color: #FFFFFF;
+    text-shadow: rgba(0, 0, 0, 0.4) 0px -1px 0;
+}
+
+.toggleOff {
+    position: absolute;
+    width: 60px;
+    text-align: center;
+    right: 0;
+    top: 0;
+    color: #666666;
+}
+
+.toggle[toggled="true"] > .toggleOn {
+    display: block;
+}
+
+.toggle[toggled="true"] > .toggleOff {
+    display: none;
+}
+
+.thumb {
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    width: 40px;
+    height: 28px;    
+    border: 1px solid #888888;
+    -webkit-border-radius: 6px;
+    background: #ffffff url(thumb.png) repeat-x;
+}
+
+.toggle[toggled="true"] > .thumb {
+    left: auto;
+    right: -1px;
+}
+
+.panel > h2 {
+    margin: 0 0 8px 14px;
+    font-size: inherit;
+    font-weight: bold;
+    color: #4d4d70;
+    text-shadow: rgba(255, 255, 255, 0.75) 2px 2px 0;
+}
+
+/************************************************************************************************/
+
+#preloader {
+    display: none;
+    background-image: url(loading.gif), url(selection.png),
+        url(blueButton.png), url(listArrowSel.png), url(listGroup.png);
+}
+
+h2 {
+    margin: 10px;
+    color: #6d84a2;
+}
+
+p {
+    margin: 10px;
+}
+</style>
+
+</head>
+
+<body>
+    <div class="toolbar">
+        <h1 id="pageTitle"></h1>
+        <a id="backButton" class="button" href="#"></a>
+    </div>
+    <ul id="home" title="Help" selected="true">
+        <li><a href="#howtouse">How to Use</a></li>
+        <li><a href="#general">General Settings</a></li>
+        <li><a href="#advanced">Advanced Options</a></li>
+        <li><a href="#tipstricks">Tips &amp; Tricks</a></li>
+        <li><a href="#troubleshoot">Troubleshooting</a></li>
+    </ul>
+	<div id="howtouse" title="How to Use">
+	    <h2>How to Use</h2>
+	    <p>This help page explains the basics of how to use this app.</p>
+	</div>
+	<div id="general" title="Settings">
+	    <h2>General Settings</h2>
+	    <p>This help page explains how to configure the general settings for this app.</p>
+	</div>
+	<div id="advanced" title="Advanced">
+	    <h2>Advanced Options</h2>
+	    <p>This help page explains how to configure the advanced options for this app.</p>
+	</div>
+	<div id="tipstricks" title="Tips &amp; Tricks">
+	    <h2>Tips &amp; Tricks</h2>
+	    <p>This help page reveals all of the app's cool tips and tricks.</p>
+	</div>    
+    <div id="troubleshoot" title="Troubleshoot">
+    	<h2>Troubleshooting</h2>
+    	<p>Having problems with this app? This help page includes troubleshooting tips for resolving common issues.</p>
+	</div>
+</body>
+</html>

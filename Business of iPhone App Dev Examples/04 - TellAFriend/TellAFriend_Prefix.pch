@@ -1,0 +1,8 @@
+//
+// Prefix header for all source files of the 'TellAFriend' target in the 'TellAFriend' project
+//
+
+#ifdef __OBJC__
+    #import <Foundation/Foundation.h>
+    #import <UIKit/UIKit.h>
+#endif
